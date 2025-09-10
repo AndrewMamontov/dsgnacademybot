@@ -1,1 +1,4 @@
 aiogram==2.25.1
+python-telegram-bot==20.3
+gspread==5.11.1
+oauth2client==4.1.3

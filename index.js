@@ -1,32 +1,58 @@
-require("dotenv").config();
-const { GoogleSpreadsheet } = require("google-spreadsheet");
-const TelegramBot = require("node-telegram-bot-api");
+require('dotenv').config();
+const TelegramBot = require('node-telegram-bot-api');
+const { appendUserToSheet } = require('./sheets');
+const fs = require('fs');
+const path = require('path');
 
-const doc = new GoogleSpreadsheet(process.env.SPREADSHEET_ID);
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
-
-async function accessSheet() {
-  await doc.useServiceAccountAuth({
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-  });
-  await doc.loadInfo();
-}
+const adminId = process.env.ADMIN_ID;
+const users = {};
 
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const name = msg.from.first_name + (msg.from.last_name ? ' ' + msg.from.last_name : '');
-  const username = msg.from.username || '';
-  const date = new Date().toLocaleString();
+  const name = msg.from.first_name || 'друг';
 
-  await accessSheet();
-  const sheet = doc.sheetsByIndex[0];
-  await sheet.addRow({
-    Date: date,
-    Name: name,
-    Username: username,
-    ChatID: chatId,
+  users[chatId] = { step: 'interests', interests: [], paid: false };
+
+  await bot.sendMessage(chatId, `👋 Привіт, ${name}!
+Тут буде все найцікавіше з Dsgn Academy:
+— подарунки
+— оновлення
+— корисні штуки для дизайнерів 🧡`);
+
+  await bot.sendMessage(chatId, 'Що тебе цікавить найбільше? Обери кілька варіантів:', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Framer', callback_data: 'Framer' }, { text: 'Figma', callback_data: 'Figma' }],
+        [{ text: 'Spline', callback_data: 'Spline' }, { text: 'Webflow', callback_data: 'Webflow' }]
+      ]
+    }
   });
+});
 
-  bot.sendMessage(chatId, "Вітаємо в DSGN Academy 🎉\n\nТут будуть новини, оновлення, подарунки та круті ресурси для дизайнерів.\n\nРадий тебе бачити 🧡");
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const interest = query.data;
+
+  if (!users[chatId].interests.includes(interest)) {
+    users[chatId].interests.push(interest);
+  }
+
+  await bot.answerCallbackQuery(query.id, { text: `Додано: ${interest}` });
+  await bot.sendMessage(chatId, `✅ Збережено інтерес: ${interest}`);
+  await appendUserToSheet(chatId, users[chatId].interests.join(', '));
+  await bot.sendMessage(chatId, `📸 Якщо ти оформив(ла) підписку, надішли скріншот сюди.`);
+});
+
+bot.on('photo', async (msg) => {
+  const chatId = msg.chat.id;
+  if (!users[chatId] || users[chatId].paid) return;
+
+  users[chatId].paid = true;
+  await appendUserToSheet(chatId, users[chatId].interests.join(', '), true);
+
+  const filePath = path.join(__dirname, 'gift_files', 'framer-pack.zip');
+  await bot.sendMessage(chatId, `🎁 Дякуємо за підписку! Ось твій подарунок:`);
+  await bot.sendDocument(chatId, filePath);
+  bot.sendMessage(adminId, `✅ Користувач @${msg.from.username || msg.from.first_name} (${chatId}) надіслав скрін підписки.`);
 });
